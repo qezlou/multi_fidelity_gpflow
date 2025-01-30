@@ -9,6 +9,10 @@ import gpflow
 import numpy as np
 import tensorflow as tf
 
+import gpflow
+import tensorflow as tf
+import numpy as np
+
 class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
     """
     Linear Multi-Fidelity Kernel (Kennedy & O’Hagan, 2000).
@@ -50,7 +54,6 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
     def K(self, X, X2=None):
         """
         Constructs the full covariance matrix for multi-fidelity modeling.
-        Includes debug printing for shape mismatches.
         """
 
         # Convert input to TensorFlow tensors
@@ -72,27 +75,35 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         print(f"  mask_L shape: {mask_L.shape}, mask_H shape: {mask_H.shape}")
         print(f"  mask2_L shape: {mask2_L.shape}, mask2_H shape: {mask2_H.shape}")
 
-        # Extract values using tf.gather() instead of tf.boolean_mask()
+        # Extract values using tf.gather()
         X_L = tf.gather(X[:, :-1], mask_L)
         X_H = tf.gather(X[:, :-1], mask_H)
         X2_L = tf.gather(X2[:, :-1], mask2_L)
         X2_H = tf.gather(X2[:, :-1], mask2_H)
 
+        # Explicitly set shapes if possible
+        X_L.set_shape([None, X.shape[1] - 1])
+        X_H.set_shape([None, X.shape[1] - 1])
+        X2_L.set_shape([None, X2.shape[1] - 1])
+        X2_H.set_shape([None, X2.shape[1] - 1])
+
         print(f"  Fixed X_L shape: {X_L.shape}, X_H shape: {X_H.shape}")
         print(f"  Fixed X2_L shape: {X2_L.shape}, X2_H shape: {X2_H.shape}")
 
-        # Ensure rho is a column vector of shape [HF_points, 1]
-        rho_col = tf.reshape(self.rho, (-1, 1))  # Shape: [HF_points, 1]
+        # Ensure rho is a column vector of shape [N_H, 1]
+        rho_col = tf.reshape(self.rho, [-1, 1])  # Shape: [N_H, 1]
 
         print(f"  rho shape before reshape: {self.rho.shape}")
         print(f"  rho_col shape after reshape: {rho_col.shape}")
 
         # Compute covariance components
         K_LL = self.kernel_L.K(X_L, X2_L)
-        K_LH = self.kernel_L.K(X_L, X2_H) * tf.reshape(self.rho, (-1, 1))
-        K_HL = self.kernel_L.K(X_H, X2_L) * tf.reshape(self.rho, (1, -1))
 
-        # Fix rho outer product to ensure correct shape [HF_points, HF_points]
+        # ✅ Fix broadcasting issue
+        K_LH = self.kernel_L.K(X_L, X2_H) * tf.reshape(self.rho, [1, -1])  # Broadcast across rows
+        K_HL = self.kernel_L.K(X_H, X2_L) * tf.reshape(self.rho, [-1, 1])  # Broadcast across columns
+
+        # Ensure rho_outer has the correct shape [N_H, N_H]
         rho_outer = rho_col @ tf.transpose(rho_col)
         print(f"  rho_outer shape: {rho_outer.shape}")
 
@@ -113,10 +124,10 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         print(f"  indices_LL shape: {indices_LL.shape}, indices_HH shape: {indices_HH.shape}")
 
         # Apply tensor updates to construct the full covariance matrix
-        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LL, (-1, 2)), tf.reshape(K_LL, (-1,)))
-        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LH, (-1, 2)), tf.reshape(K_LH, (-1,)))
-        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HL, (-1, 2)), tf.reshape(K_HL, (-1,)))
-        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HH, (-1, 2)), tf.reshape(K_HH, (-1,)))
+        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LL, [-1, 2]), tf.reshape(K_LL, [-1]))
+        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LH, [-1, 2]), tf.reshape(K_LH, [-1]))
+        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HL, [-1, 2]), tf.reshape(K_HL, [-1]))
+        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HH, [-1, 2]), tf.reshape(K_HH, [-1]))
 
         print(f"  ✅ Final K_full shape: {K_full.shape}")
 
@@ -143,13 +154,13 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         K_diag_full = tf.zeros((X.shape[0],), dtype=tf.float64)
 
         # Place diagonal values at correct indices
-        K_diag_full = tf.tensor_scatter_nd_update(K_diag_full, tf.reshape(mask_L, (-1, 1)), tf.reshape(K_diag_L, (-1,)))
-        K_diag_full = tf.tensor_scatter_nd_update(K_diag_full, tf.reshape(mask_H, (-1, 1)), tf.reshape(K_diag_H, (-1,)))
+        K_diag_full = tf.tensor_scatter_nd_update(K_diag_full, tf.reshape(mask_L, [-1, 1]), tf.reshape(K_diag_L, [-1]))
+        K_diag_full = tf.tensor_scatter_nd_update(K_diag_full, tf.reshape(mask_H, [-1, 1]), tf.reshape(K_diag_H, [-1]))
 
         print(f"  ✅ Final K_diag shape: {K_diag_full.shape}")
 
         return K_diag_full
-
+    
 class MultiFidelityGPModel(gpflow.models.GPR):
     """
     Gaussian Process model for multi-fidelity learning.
