@@ -15,7 +15,18 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
     where:
         - f_L(x) is a Gaussian process modeling the low-fidelity function.
         - δ(x) is an independent GP modeling discrepancies.
-        - ρ is a learnable scaling factor applied **across output dimensions**.
+        - ρ is a **learnable array** applied across **output dimensions**.
+
+    The covariance matrix has a block structure:
+
+        K =
+        [  K_LL   K_LH  ]
+        [  K_HL   K_HH  ]
+
+    where:
+        - K_LL = Covariance matrix for low-fidelity points.
+        - K_LH = K_HL^T = Scaled cross-covariance.
+        - K_HH = Scaled LF + discrepancy covariance.
 
     Parameters:
         - kernel_L: GP kernel for the low-fidelity function.
@@ -30,7 +41,7 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
 
         # Learnable rho for each output dimension
         self.rho = gpflow.Parameter(
-            np.ones((1, num_output_dims)), transform=positive()
+            np.ones((num_output_dims, 1)), transform=positive()
         )
 
     def K(self, X, X2=None):
@@ -56,30 +67,28 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         X2_L = tf.gather(X2[:, :-1], mask2_L)
         X2_H = tf.gather(X2[:, :-1], mask2_H)
 
-        # Ensure rho has the correct shape: (1, output_dim)
-        rho = tf.reshape(self.rho, [1, -1])  # Shape: (1, output_dim)
+        # Ensure rho has shape `(output_dim, 1)` for broadcasting
+        rho = tf.reshape(self.rho, [-1, 1])  # Shape: (output_dim, 1)
 
-        # Compute covariance components
-        K_LL = self.kernel_L.K(X_L, X2_L)  # LF covariance
-        K_LH = self.kernel_L.K(X_L, X2_H) * rho  # LF-HF scaled covariance
-        K_HL = self.kernel_L.K(X_H, X2_L) * rho  # LF-HF scaled covariance
-
-        # Compute HF covariance (scaling across output dimensions)
-        K_HH = self.kernel_L.K(X_H, X2_H) * (rho @ tf.transpose(rho)) + self.kernel_delta.K(X_H, X2_H)
-
-        # Construct full covariance matrix
+        # Compute covariance **for each output dimension**
         K_full = tf.zeros((X.shape[0], X2.shape[0]), dtype=tf.float64)
 
-        # Assign covariance blocks using scatter updates
-        indices_LL = tf.stack(tf.meshgrid(mask_L, mask2_L, indexing="ij"), axis=-1)
-        indices_LH = tf.stack(tf.meshgrid(mask_L, mask2_H, indexing="ij"), axis=-1)
-        indices_HL = tf.stack(tf.meshgrid(mask_H, mask2_L, indexing="ij"), axis=-1)
-        indices_HH = tf.stack(tf.meshgrid(mask_H, mask2_H, indexing="ij"), axis=-1)
+        for i in range(self.rho.shape[0]):  # Loop over output dimensions
+            K_LL = self.kernel_L.K(X_L, X2_L)  # LF covariance
+            K_LH = self.kernel_L.K(X_L, X2_H) * rho[i]  # LF-HF scaled covariance
+            K_HL = self.kernel_L.K(X_H, X2_L) * rho[i]  # HF-LF scaled covariance
+            K_HH = self.kernel_L.K(X_H, X2_H) * (rho[i] @ tf.transpose(rho[i])) + self.kernel_delta.K(X_H, X2_H)
 
-        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LL, [-1, 2]), tf.reshape(K_LL, [-1]))
-        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LH, [-1, 2]), tf.reshape(K_LH, [-1]))
-        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HL, [-1, 2]), tf.reshape(K_HL, [-1]))
-        K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HH, [-1, 2]), tf.reshape(K_HH, [-1]))
+            # Scatter updates to construct full covariance
+            indices_LL = tf.stack(tf.meshgrid(mask_L, mask2_L, indexing="ij"), axis=-1)
+            indices_LH = tf.stack(tf.meshgrid(mask_L, mask2_H, indexing="ij"), axis=-1)
+            indices_HL = tf.stack(tf.meshgrid(mask_H, mask2_L, indexing="ij"), axis=-1)
+            indices_HH = tf.stack(tf.meshgrid(mask_H, mask2_H, indexing="ij"), axis=-1)
+
+            K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LL, [-1, 2]), tf.reshape(K_LL, [-1]))
+            K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LH, [-1, 2]), tf.reshape(K_LH, [-1]))
+            K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HL, [-1, 2]), tf.reshape(K_HL, [-1]))
+            K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HH, [-1, 2]), tf.reshape(K_HH, [-1]))
 
         return K_full
 
@@ -108,6 +117,7 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         K_diag_full = tf.tensor_scatter_nd_update(K_diag_full, tf.reshape(mask_H, [-1, 1]), tf.reshape(K_diag_H, [-1]))
 
         return K_diag_full
+
 class MultiFidelityGPModel(gpflow.models.GPR):
     """
     Gaussian Process model for multi-fidelity learning.
