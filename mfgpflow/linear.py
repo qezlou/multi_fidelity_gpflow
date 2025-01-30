@@ -15,11 +15,11 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
     where:
         - f_L(x) is a Gaussian process modeling the low-fidelity function.
         - δ(x) is an independent GP modeling discrepancies.
-        - ρ is a learnable scaling factor **per output dimension**.
+        - ρ is a learnable scaling factor applied **across output dimensions**.
 
     Parameters:
-        - kernel_L: Kernel for the low-fidelity function.
-        - kernel_delta: Kernel for the discrepancy.
+        - kernel_L: GP kernel for the low-fidelity function.
+        - kernel_delta: GP kernel for the discrepancy.
         - num_output_dims: The number of independent outputs (size of `Y.shape[1]`).
     """
 
@@ -28,7 +28,7 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         self.kernel_L = kernel_L  # Kernel for low-fidelity function
         self.kernel_delta = kernel_delta  # Kernel for discrepancy
 
-        # ✅ Learnable rho with one value per output dimension
+        # Learnable rho for each output dimension
         self.rho = gpflow.Parameter(
             np.ones((1, num_output_dims)), transform=positive()
         )
@@ -38,9 +38,9 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         Constructs the full covariance matrix for multi-fidelity modeling.
         """
         if X2 is None:
-            X2 = X  # ✅ Ensure X2 defaults to X
+            X2 = X
 
-        # ✅ Convert input to TensorFlow tensors
+        # Convert input to TensorFlow tensors
         X = tf.convert_to_tensor(X, dtype=tf.float64)
         X2 = tf.convert_to_tensor(X2, dtype=tf.float64)
 
@@ -56,28 +56,26 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         X2_L = tf.gather(X2[:, :-1], mask2_L)
         X2_H = tf.gather(X2[:, :-1], mask2_H)
 
-        # ✅ Ensure rho is correctly shaped: (1, output_dim)
+        # Ensure rho has the correct shape: (1, output_dim)
         rho = tf.reshape(self.rho, [1, -1])  # Shape: (1, output_dim)
 
         # Compute covariance components
         K_LL = self.kernel_L.K(X_L, X2_L)  # LF covariance
-        K_LH = self.kernel_L.K(X_L, X2_H) * rho  # ✅ LF-HF covariance, scaled per output dim
-        K_HL = self.kernel_L.K(X_H, X2_L) * tf.transpose(rho)  # ✅ Transposed scaling
+        K_LH = self.kernel_L.K(X_L, X2_H) * rho  # LF-HF scaled covariance
+        K_HL = self.kernel_L.K(X_H, X2_L) * rho  # LF-HF scaled covariance
 
-        # ✅ Ensure rho_outer is properly shaped for multi-output cases
-        rho_outer = rho @ tf.transpose(rho)  # Shape: (output_dim, output_dim)
-        K_HH = self.kernel_L.K(X_H, X2_H) * rho_outer + self.kernel_delta.K(X_H, X2_H)
+        # Compute HF covariance (scaling across output dimensions)
+        K_HH = self.kernel_L.K(X_H, X2_H) * (rho @ tf.transpose(rho)) + self.kernel_delta.K(X_H, X2_H)
 
-        # ✅ Construct full covariance matrix using tensor scatter updates
+        # Construct full covariance matrix
         K_full = tf.zeros((X.shape[0], X2.shape[0]), dtype=tf.float64)
 
-        # Extract index positions for placing the computed covariance submatrices
+        # Assign covariance blocks using scatter updates
         indices_LL = tf.stack(tf.meshgrid(mask_L, mask2_L, indexing="ij"), axis=-1)
         indices_LH = tf.stack(tf.meshgrid(mask_L, mask2_H, indexing="ij"), axis=-1)
         indices_HL = tf.stack(tf.meshgrid(mask_H, mask2_L, indexing="ij"), axis=-1)
         indices_HH = tf.stack(tf.meshgrid(mask_H, mask2_H, indexing="ij"), axis=-1)
 
-        # ✅ Preserve `K_full` approach for assembling covariance matrix
         K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LL, [-1, 2]), tf.reshape(K_LL, [-1]))
         K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LH, [-1, 2]), tf.reshape(K_LH, [-1]))
         K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HL, [-1, 2]), tf.reshape(K_HL, [-1]))
@@ -89,7 +87,6 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         """
         Computes the diagonal elements of the covariance matrix.
         """
-        # ✅ Convert input to tensor
         X = tf.convert_to_tensor(X, dtype=tf.float64)
 
         # Extract LF and HF indices
@@ -101,15 +98,16 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
 
         # Compute diagonal covariance elements
         K_diag_L = self.kernel_L.K_diag(X_L)
-        K_diag_H = self.kernel_L.K_diag(X_H) * tf.square(self.rho) + self.kernel_delta.K_diag(X_H)
+        K_diag_H = self.kernel_L.K_diag(X_H) * (self.rho ** 2) + self.kernel_delta.K_diag(X_H)
 
-        # ✅ Preserve `K_diag_full` approach for assembly
+        # Construct full diagonal vector
         K_diag_full = tf.zeros((X.shape[0],), dtype=tf.float64)
+
+        # Place diagonal values at correct indices
         K_diag_full = tf.tensor_scatter_nd_update(K_diag_full, tf.reshape(mask_L, [-1, 1]), tf.reshape(K_diag_L, [-1]))
         K_diag_full = tf.tensor_scatter_nd_update(K_diag_full, tf.reshape(mask_H, [-1, 1]), tf.reshape(K_diag_H, [-1]))
 
         return K_diag_full
-
 class MultiFidelityGPModel(gpflow.models.GPR):
     """
     Gaussian Process model for multi-fidelity learning.
