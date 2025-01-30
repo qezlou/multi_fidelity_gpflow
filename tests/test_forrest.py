@@ -3,7 +3,11 @@ import matplotlib.pyplot as plt
 import gpflow
 import tensorflow as tf
 from gpflow.utilities import set_trainable
-from linear import MultiFidelityGPModel  # Assuming the kernel and model are defined in linear.py
+from mfgpflow.linear import MultiFidelityGPModel  # Assuming the kernel and model are defined in linear.py
+
+# include the import path from previous directory
+import sys
+sys.path.append("..")
 
 def forrester(x, sd=0):
     x = x.reshape((len(x), 1))
