@@ -9,7 +9,6 @@ import gpflow
 import numpy as np
 import tensorflow as tf
 
-
 class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
     """
     Linear Multi-Fidelity Kernel (Kennedy & O’Hagan, 2000).
@@ -61,18 +60,26 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         else:
             X2 = tf.convert_to_tensor(X2, dtype=tf.float64)
 
-        print(f"Inside K function")
+        print("\n🔍 Inside K function:")
         print(f"  X shape: {X.shape}, X2 shape: {X2.shape}")
 
-        # Separate LF and HF data using boolean masks
-        X_L = tf.boolean_mask(X, X[:, -1] == 0)[:, :-1]  # Low-fidelity inputs
-        X_H = tf.boolean_mask(X, X[:, -1] == 1)[:, :-1]  # High-fidelity inputs
+        # Extract index masks
+        mask_L = tf.where(X[:, -1] == 0)[:, 0]
+        mask_H = tf.where(X[:, -1] == 1)[:, 0]
+        mask2_L = tf.where(X2[:, -1] == 0)[:, 0]
+        mask2_H = tf.where(X2[:, -1] == 1)[:, 0]
 
-        X2_L = tf.boolean_mask(X2, X2[:, -1] == 0)[:, :-1]
-        X2_H = tf.boolean_mask(X2, X2[:, -1] == 1)[:, :-1]
+        print(f"  mask_L shape: {mask_L.shape}, mask_H shape: {mask_H.shape}")
+        print(f"  mask2_L shape: {mask2_L.shape}, mask2_H shape: {mask2_H.shape}")
 
-        print(f"  X_L shape: {X_L.shape}, X_H shape: {X_H.shape}")
-        print(f"  X2_L shape: {X2_L.shape}, X2_H shape: {X2_H.shape}")
+        # Extract values using tf.gather() instead of tf.boolean_mask()
+        X_L = tf.gather(X[:, :-1], mask_L)
+        X_H = tf.gather(X[:, :-1], mask_H)
+        X2_L = tf.gather(X2[:, :-1], mask2_L)
+        X2_H = tf.gather(X2[:, :-1], mask2_H)
+
+        print(f"  Fixed X_L shape: {X_L.shape}, X_H shape: {X_H.shape}")
+        print(f"  Fixed X2_L shape: {X2_L.shape}, X2_H shape: {X2_H.shape}")
 
         # Ensure rho is a column vector of shape [HF_points, 1]
         rho_col = tf.reshape(self.rho, (-1, 1))  # Shape: [HF_points, 1]
@@ -94,26 +101,16 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         print(f"  K_LL shape: {K_LL.shape}, K_LH shape: {K_LH.shape}")
         print(f"  K_HL shape: {K_HL.shape}, K_HH shape: {K_HH.shape}")
 
-        # Initialize full covariance matrix using tf.zeros() instead of tf.Variable()
+        # Initialize full covariance matrix using tf.zeros()
         K_full = tf.zeros((X.shape[0], X2.shape[0]), dtype=tf.float64)
 
         # Extract index positions for placing the computed covariance submatrices
-        mask_L = tf.where(X[:, -1] == 0)[:, 0]
-        mask_H = tf.where(X[:, -1] == 1)[:, 0]
-        mask2_L = tf.where(X2[:, -1] == 0)[:, 0]
-        mask2_H = tf.where(X2[:, -1] == 1)[:, 0]
-
-        print(f"  mask_L shape: {mask_L.shape}, mask_H shape: {mask_H.shape}")
-        print(f"  mask2_L shape: {mask2_L.shape}, mask2_H shape: {mask2_H.shape}")
-
-        # Ensure correct dimensions for indices
         indices_LL = tf.stack(tf.meshgrid(mask_L, mask2_L, indexing="ij"), axis=-1)
         indices_LH = tf.stack(tf.meshgrid(mask_L, mask2_H, indexing="ij"), axis=-1)
         indices_HL = tf.stack(tf.meshgrid(mask_H, mask2_L, indexing="ij"), axis=-1)
         indices_HH = tf.stack(tf.meshgrid(mask_H, mask2_H, indexing="ij"), axis=-1)
 
-        print(f"  indices_LL shape: {indices_LL.shape}")
-        print(f"  indices_HH shape: {indices_HH.shape}")
+        print(f"  indices_LL shape: {indices_LL.shape}, indices_HH shape: {indices_HH.shape}")
 
         # Apply tensor updates to construct the full covariance matrix
         K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_LL, (-1, 2)), tf.reshape(K_LL, (-1,)))
@@ -121,7 +118,7 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HL, (-1, 2)), tf.reshape(K_HL, (-1,)))
         K_full = tf.tensor_scatter_nd_update(K_full, tf.reshape(indices_HH, (-1, 2)), tf.reshape(K_HH, (-1,)))
 
-        print(f"  Final K_full shape: {K_full.shape}")
+        print(f"  ✅ Final K_full shape: {K_full.shape}")
 
         return K_full
 
@@ -132,23 +129,24 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         X = tf.convert_to_tensor(X, dtype=tf.float64)
 
         # Extract LF and HF indices
-        X_L = tf.boolean_mask(X, X[:, -1] == 0)[:, :-1]
-        X_H = tf.boolean_mask(X, X[:, -1] == 1)[:, :-1]
+        mask_L = tf.where(X[:, -1] == 0)[:, 0]
+        mask_H = tf.where(X[:, -1] == 1)[:, 0]
+
+        X_L = tf.gather(X[:, :-1], mask_L)
+        X_H = tf.gather(X[:, :-1], mask_H)
 
         # Compute diagonal covariance elements
         K_diag_L = self.kernel_L.K_diag(X_L)
         K_diag_H = self.kernel_L.K_diag(X_H) * self.rho**2 + self.kernel_delta.K_diag(X_H)
 
-        # Construct full diagonal vector using tf.zeros() instead of tf.Variable()
+        # Construct full diagonal vector using tf.zeros()
         K_diag_full = tf.zeros((X.shape[0],), dtype=tf.float64)
-        mask_L = tf.where(X[:, -1] == 0)[:, 0]
-        mask_H = tf.where(X[:, -1] == 1)[:, 0]
 
         # Place diagonal values at correct indices
         K_diag_full = tf.tensor_scatter_nd_update(K_diag_full, tf.reshape(mask_L, (-1, 1)), tf.reshape(K_diag_L, (-1,)))
         K_diag_full = tf.tensor_scatter_nd_update(K_diag_full, tf.reshape(mask_H, (-1, 1)), tf.reshape(K_diag_H, (-1,)))
 
-        print(f"  Final K_diag shape: {K_diag_full.shape}")
+        print(f"  ✅ Final K_diag shape: {K_diag_full.shape}")
 
         return K_diag_full
 
