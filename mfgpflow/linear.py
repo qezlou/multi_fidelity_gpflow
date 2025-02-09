@@ -194,6 +194,7 @@ class MultiFidelityGPModel(gpflow.models.GPR):
         """
         # print(f"🔹 Pre-Optimization rho: {self.kernel.rho.numpy()}")
         self.loss_history = []
+
         if use_adam:
             optimizer = tf.optimizers.Adam(learning_rate)
 
@@ -203,29 +204,33 @@ class MultiFidelityGPModel(gpflow.models.GPR):
                     loss = -self.log_marginal_likelihood()  # Maximize log-marginal likelihood
                 grads = tape.gradient(loss, self.trainable_variables)
                 optimizer.apply_gradients(zip(grads, self.trainable_variables))
+                return loss  # Track loss
 
             print("Optimizing with Adam...")
             for i in range(max_iters):
-                optimization_step()
+                loss = optimization_step()
+                self.loss_history.append(loss.numpy())  # Store loss history
 
                 if i == unfix_noise_after:
                     print(f"🔹 Unfixing noise at iteration {i}")
                     set_trainable(self.likelihood.variance, True)
 
                 if i % 100 == 0:
-                    print(f"🔹 Iteration {i}: Loss = {-self.log_marginal_likelihood().numpy()}")
-                    # print(f"🔹 Current rho values: {self.kernel.rho.numpy()}")
+                    print(f"🔹 Iteration {i}: Loss = {-loss.numpy()}")
 
         else:
             print("Optimizing with L-BFGS (Scipy)...")
+            
+            def loss_closure():
+                loss = -self.log_marginal_likelihood()
+                self.loss_history.append(loss.numpy())  # Store loss history
+                return loss
+
             scipy_optimizer = gpflow.optimizers.Scipy()
-            scipy_optimizer.minimize(
-                lambda: -self.log_marginal_likelihood(), self.trainable_variables, options={"maxiter": max_iters}
-            )
+            scipy_optimizer.minimize(loss_closure, self.trainable_variables, options={"maxiter": max_iters})
+
             set_trainable(self.likelihood.variance, True)
-            scipy_optimizer.minimize(
-                lambda: -self.log_marginal_likelihood(), self.trainable_variables, options={"maxiter": max_iters}
-            )
+            scipy_optimizer.minimize(loss_closure, self.trainable_variables, options={"maxiter": max_iters})
 
     # @inherit_check_shapes
     # def predict_f(self, Xnew: InputData, full_cov: bool = False, full_output_cov: bool = False) -> MeanAndVariance:
