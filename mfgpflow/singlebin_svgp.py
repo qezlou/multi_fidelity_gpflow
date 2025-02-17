@@ -101,7 +101,7 @@ class SingleBinSVGP(SVGP):
         print(f"✅ Model saved to {filename}")
 
     @staticmethod
-    def load_model(filename, X, Y, kernel_L, kernel_delta, num_outputs, num_latents, Z):
+    def load_model(filename, X, Y, kernel_L, kernel_delta, num_outputs, Z):
         """
         Loads an SVGP model from a saved file.
 
@@ -121,7 +121,7 @@ class SingleBinSVGP(SVGP):
         with open(filename, "rb") as f:
             params = pickle.load(f)
 
-        model = SingleBinSVGP(X, Y, kernel_L, kernel_delta, num_outputs, num_latents, Z)
+        model = SingleBinSVGP(X, Y, kernel_L, kernel_delta, num_outputs, Z)
         gpflow.utilities.assign_parameters_from_dict(model, params)
         print(f"✅ Model loaded from {filename}")
         return model
