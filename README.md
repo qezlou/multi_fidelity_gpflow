@@ -1,6 +1,20 @@
 # multi_fidelity_gpflow
 
-An implementation of multi-fidelity emulators from emukit using GPFlow
+An implementation of multi-fidelity emulators from emukit using GPFlow. The multi-fidelity kernel relies on Kennedy & O’Hagan, 2000,
+which uses a linear cross-covariance matrix to link the low- and high-fidelity data:
+
+This kernel models the high-fidelity function as:
+
+    f_H(x) = ρ * f_L(x) + δ(x)
+
+where:
+    - f_L(x) is a Gaussian process modeling the low-fidelity function.
+    - δ(x) is an independent GP modeling discrepancies.
+    - ρ is a learnable scaling factor.
+
+The linear multi-fidelity is largely re-written from emukit's kernel implementation into gpflow's kernel implementation. See `mfgpflow/linear.py`.
+
+We include additional implementations to extend the idea of linear multi-fidelity to multi-output, using sparse gp and linearcoregionalization, see section below `Demo: For testing Ho-Bird-Shelton 2021 50LF-3HF DM only power spectra` and `mfgpflow/linear_svgp.py`.
 
 Necessary Packages
 

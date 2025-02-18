@@ -21,7 +21,7 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
     where:
         - f_L(x) is a Gaussian process modeling the low-fidelity function.
         - δ(x) is an independent GP modeling discrepancies.
-        - ρ is a **learnable scaling factor per output dimension**.
+        - ρ is a learnable scaling factor.
 
     The covariance matrix has a block structure:
 
