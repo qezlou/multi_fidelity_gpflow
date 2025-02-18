@@ -2,6 +2,8 @@ import gpflow
 import tensorflow as tf
 import numpy as np
 import pickle
+from copy import deepcopy
+
 from sklearn.cluster import KMeans
 from gpflow.kernels import SquaredExponential, Linear
 from gpflow.models import SVGP
@@ -70,14 +72,15 @@ class LatentMFCoregionalizationSVGP(SVGP):
         self.num_latents = num_latents
 
         # ✅ Multi-Fidelity Kernel
-        mf_kernel = LinearMultiFidelityKernel(kernel_L, kernel_delta, num_latents)
+        # mf_kernel = LinearMultiFidelityKernel(kernel_L, kernel_delta, num_latents)
 
         # ✅ Initialize W (P × L) with structured correlations
         W_init = initialize_W(num_outputs, num_latents, window_fraction=window_fraction, scale=scale)
         W = gpflow.Parameter(W_init)  # Learnable mixing matrix
 
         # ✅ Use LinearCoregionalization for Multi-Output GP
-        kernel_list = [mf_kernel for _ in range(num_latents)]
+        # kernel_list = [mf_kernel for _ in range(num_latents)]
+        kernel_list = [LinearMultiFidelityKernel(deepcopy(kernel_L), deepcopy(kernel_delta), num_output_dims=1) for _ in range(num_latents)]
         multioutput_kernel = LinearCoregionalization(kernel_list, W=W)
 
         # ✅ Use KMeans to Find Good Inducing Points
@@ -143,6 +146,6 @@ class LatentMFCoregionalizationSVGP(SVGP):
         with open(filename, "rb") as f:
             params = pickle.load(f)
         model = LatentMFCoregionalizationSVGP(*args)
-        gpflow.utilities.assign_parameters_from_dict(model, params)
+        gpflow.utilities.multiple_assign(model, params)
         print(f"✅ Model loaded from {filename}")
         return model

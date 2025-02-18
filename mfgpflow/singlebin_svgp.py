@@ -8,6 +8,7 @@ from gpflow.likelihoods import Gaussian
 from gpflow.inducing_variables import InducingPoints, SharedIndependentInducingVariables
 from .linear import LinearMultiFidelityKernel  # Your existing LinearMultiFidelityKernel
 import pickle
+from copy import deepcopy
 
 class SingleBinSVGP(SVGP):
     """
@@ -32,10 +33,17 @@ class SingleBinSVGP(SVGP):
         self.num_outputs = num_outputs
 
         # ✅ Multi-Fidelity Kernel
-        mf_kernel = LinearMultiFidelityKernel(kernel_L, kernel_delta, num_output_dims=num_outputs)
+        # mf_kernel = LinearMultiFidelityKernel(kernel_L, kernel_delta, num_output_dims=num_outputs)
+        # ✅ Multi-Fidelity Kernel (Create Independent Instances)
+
+        kernel_list = [LinearMultiFidelityKernel(deepcopy(kernel_L), deepcopy(kernel_delta), num_output_dims=1) for _ in range(num_outputs)]
+        # kernel_list = [
+        #     LinearMultiFidelityKernel(kernel_L, kernel_delta, num_output_dims=1)
+        #     for _ in range(num_outputs)
+        # ]
 
         # ✅ Use LinearCoregionalization for Multi-Output GP (L < P)
-        kernel_list = [mf_kernel for _ in range(num_outputs)]
+        # kernel_list = [mf_kernel for _ in range(num_outputs)]
         multioutput_kernel = gpflow.kernels.SeparateIndependent(kernel_list)
 
         # ✅ Use KMeans to Find Good Inducing Points
@@ -122,6 +130,6 @@ class SingleBinSVGP(SVGP):
             params = pickle.load(f)
 
         model = SingleBinSVGP(X, Y, kernel_L, kernel_delta, num_outputs, Z)
-        gpflow.utilities.assign_parameters_from_dict(model, params)
+        gpflow.utilities.multiple_assign(model, params)
         print(f"✅ Model loaded from {filename}")
         return model
