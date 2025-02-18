@@ -1,5 +1,8 @@
 # multi_fidelity_gpflow
+
 An implementation of multi-fidelity emulators from emukit using GPFlow
+
+Packages
 
 ## Demo: For testing Forrester function
 
@@ -50,9 +53,34 @@ Summary of the time costs by each method (on my 2023 Macbook Pro M1 chip, CPU)
 | Method               | Estimated Time |
 |----------------------|---------------|
 | Multi-bin Inference | 137.63 seconds |
-| Single-bin Inference | TBD           |
-| Latent Inference    | TBD           |
+| Single-bin Inference | 1724.09 seconds |
+| Latent Inference    | 539.54 seconds |
 
+### Pred/Exact in test set
+
+1) Multi-bin: 
+
+![](images/test_goku/pred_exact_multibin.png)
+
+2) Single-bin:
+
+![](images/test_goku/pred_exact_singlebin.png)
+
+3) Latent inference:
+
+![](images/test_goku/pred_exact_latentinference.png)
+
+### Diagnostic plots
+
+A few ways you can debug/interpret your inference results. First thing you can do is looking at the single-bin inference's lengthscales and scale parameters. Here we only look at scale parameters rho(k)
+
+![](images/test_goku/rho_singlebin.png)
+
+There is an apparent power suppression at higher k due to LF's resolution limitation, so higher rho to scale up the suppression.
+
+Another plot is to view the mixing matrix W learned from the latent inference, this way we can know how much different output bins (k modes in this case) are correlated, so we can reduce the number of hyperparameters to train.
+
+![](images/test_goku/learned_W_matrix.png)
 
 ---
 _Last updated: [2025/02/17]_
