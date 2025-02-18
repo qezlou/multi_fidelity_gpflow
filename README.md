@@ -2,7 +2,23 @@
 
 An implementation of multi-fidelity emulators from emukit using GPFlow
 
-Packages
+Necessary Packages
+
+- check_shapes==1.1.1
+- gpflow==2.9.0
+- h5py==3.12.1
+- matplotlib==3.10.0
+- numpy==1.23.5
+- pytest==8.3.4
+- scikit_learn==1.6.1
+- scipy==1.15.2
+- tensorflow_macos==2.10.0
+
+GPFlow has to be 2.9. The tensorflow version can see https://gpflow.github.io/GPflow/develop/installation.html. I use the suggested tensorflow and tensorflow-probability version pair.
+
+```bash
+pip install gpflow tensorflow~=2.10.0 tensorflow-probability~=0.18.0
+```
 
 ## Demo: For testing Forrester function
 
