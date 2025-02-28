@@ -477,3 +477,82 @@ class PowerSpecsMedianNorm:
             y_normspectra.append(normspectra)
 
         return y_normspectra
+    
+
+
+
+class StellarMassFunctions(PowerSpecs):
+    """
+    A data loader for stellar mass functions from CAMELS.
+    """
+    # redefine the init with different loading methods:
+    def __init__(self, folder: str = "data/illustris_smfs/1000_LR_3_HR_test0", n_fidelities: int = 2):
+        self.n_fidelities = n_fidelities
+
+        # training data
+        self.X_train = []
+        self.Y_train = []
+        for i in range(n_fidelities):
+            x_train = np.loadtxt(
+                os.path.join(folder, "train_input_fidelity_{}.txt".format(i))
+            )
+            y_train = np.loadtxt(
+                os.path.join(folder, "train_output_fidelity_{}.txt".format(i))
+            )
+
+            self.X_train.append(x_train)
+            self.Y_train.append(y_train)
+
+        # parameter limits for normalization
+        self.parameter_limits = np.loadtxt(os.path.join(folder, "input_limits.txt"))
+
+        # testing data
+        self.X_test = []
+        self.Y_test = []
+        self.X_test.append(np.loadtxt(os.path.join(folder, "test_input.txt")))
+        self.Y_test.append(np.loadtxt(os.path.join(folder, "test_output.txt")))
+
+        if len(self.X_test[0].shape) == 1:
+            self.X_test[0] = self.X_test[0][None, :]
+
+        if len(self.Y_test[0].shape) == 1:
+            self.Y_test[0] = self.Y_test[0][None, :]
+
+        # Currently no bins for SMFs (TODO: Ask Yongseok)
+        # self.kf = np.loadtxt(os.path.join(folder, "kf.txt"))
+
+        # assert len(self.kf) == self.Y_test[0].shape[1]
+        # assert len(self.kf) == self.Y_train[0].shape[1]
+
+
+    @property
+    def Y_train_norm(self):
+        """
+        Normalized training output. Subtract the low-fidelity data with
+        their sample mean.
+        """
+        y_train_norm = []
+        for y_train in self.Y_train[:-1]:
+            mean = y_train.mean(axis=0)
+            y_train_norm.append(y_train - mean)
+
+        # don't change high-fidelity data
+        y_train_norm.append(self.Y_train[-1])
+
+        return y_train_norm
+
+    @property
+    def Y_test_norm(self):
+        """
+        Normalized test output. Subtract the low-fidelity data with
+        their sample mean.
+        """
+        y_train_norm = []
+        for y_train in self.Y_train[:-1]:
+            mean = y_train.mean(axis=0)
+            y_train_norm.append(y_train - mean)
+
+        # don't change high-fidelity data
+        y_train_norm.append(self.Y_train[-1])
+
+        return y_train_norm
