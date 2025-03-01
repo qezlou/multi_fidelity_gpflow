@@ -223,7 +223,6 @@ class MultiFidelityGPModel(gpflow.models.GPR):
             
             def loss_closure():
                 loss = -self.log_marginal_likelihood()
-                self.loss_history.append(loss.numpy())  # Store loss history
                 return loss
 
             scipy_optimizer = gpflow.optimizers.Scipy()
