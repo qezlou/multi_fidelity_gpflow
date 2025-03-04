@@ -526,6 +526,82 @@ class StellarMassFunctions(PowerSpecs):
 
 
     @property
+    def Y_train_log10(self):
+        """
+        Transform from log1p to log10, and filling up the zero bins with minimum.
+        """
+        y_train_log10 = []
+
+        for y_train in self.Y_train:
+            # Assume the log1p in data
+            y_train_linear = np.expm1(y_train)
+            # check if there are zeros
+            ind = y_train_linear == 0
+            if np.any(ind):
+                # fill the zeros with minimum
+                min_nonzero = np.min(y_train_linear[y_train_linear > 0])
+                print("Warning: There are zeros in the data. filling them with minimum. ", min_nonzero)
+                y_train_linear[ind] = min_nonzero
+                self.min_nonzero = min_nonzero
+
+            y_train_log10.append(np.log10(y_train_linear))
+
+        return y_train_log10
+
+    @property
+    def Y_test_log10(self):
+        """
+        Transform from log1p to log10, and filling up the zero bins with minimum.
+        """
+        y_test_log10 = []
+
+        for y_test in self.Y_test:
+            # Assume the log1p in data
+            y_test_linear = np.expm1(y_test)
+            # check if there are zeros
+            ind = y_test_linear == 0
+            if np.any(ind):
+                # fill the zeros with minimum
+                min_nonzero = np.min(y_test_linear[y_test_linear > 0])
+                print("Warning: There are zeros in the data. filling them with minimum. ", min_nonzero)
+                y_test_linear[ind] = min_nonzero
+                self.min_nonzero = min_nonzero
+
+            y_test_log10.append(np.log10(y_test_linear))
+
+        return y_test_log10
+
+    @property
+    def Y_train_norm_log10(self):
+        """
+        Normalized training output. Subtract the low-fidelity data with
+        their sample mean. Don't change high-fidelity data.
+        """
+        y_train_norm = []
+        for y_train in self.Y_train_log10[:-1]:
+            mean = y_train.mean(axis=0)
+            y_train_norm.append(y_train - mean)
+
+        # don't change high-fidelity data
+        y_train_norm.append(self.Y_train_log10[-1])
+
+        return y_train_norm
+    
+    @property
+    def Y_test_norm_log10(self):
+        """
+        Normalized test output. Subtract the low-fidelity data with
+        their sample mean. Don't change high-fidelity data.
+        """
+        y_test_norm = []
+        for y_test in self.Y_test_log10:
+            mean = y_test.mean(axis=0)
+            y_test_norm.append(y_test - mean)
+        
+        return y_test_norm
+
+
+    @property
     def Y_train_norm(self):
         """
         Normalized training output. Subtract the low-fidelity data with
