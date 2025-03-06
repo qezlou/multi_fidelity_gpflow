@@ -18,7 +18,7 @@ for folder in "$data_base"/*; do
         output_folder="$output_base/$folder_name"
         
         echo "Processing: $folder"
-        python script.py \
+        python examples/run_smf.py \
             --data_folder "$folder" \
             --output_folder "$output_folder" \
             --num_latents $num_latents \

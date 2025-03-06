@@ -36,7 +36,7 @@ def main():
     
     X_LF, Y_LF = data.X_train_norm[0], data.Y_train_norm_log10[0]
     X_HF, Y_HF = data.X_train_norm[1], data.Y_train_norm_log10[1]
-    X_test_HF, Y_test_HF = data.X_train_norm[1], data.Y_train_norm_log10[1]
+    X_test_HF, Y_test_HF = data.X_test_norm[0], data.Y_test_log10[0]
     
     n_LF, n_HF = X_LF.shape[0], X_HF.shape[0]
     output_dim = Y_LF.shape[1]
@@ -77,11 +77,46 @@ def main():
     plt.clf()
     plt.close()
 
-    rho_values = [mf_gp.kernel.kernels[i].rho.numpy()[0] for i in range(output_dim)]
+
+    ####### Hyperparameters #######
+    num_outputs = len(mf_gp.kernel.kernels)
+
+    rho_values = []
+    lengthscale_values = []
+    lengthscale_delta_values = []
+
+    for i in range(num_outputs):
+        rho_values.append(mf_gp.kernel.kernels[i].rho.numpy()[0])
+        lengthscale_values.append(mf_gp.kernel.kernels[i].kernel_L.lengthscales.numpy())
+        lengthscale_delta_values.append(mf_gp.kernel.kernels[i].kernel_delta.lengthscales.numpy())
+
     plt.plot(range(args.num_latents), rho_values)
     plt.xlabel("Latent Dimension")
     plt.ylabel("$\\rho$")
     plt.savefig(os.path.join(fig_folder, "rho_values.png"))
+    plt.clf()
+    plt.close()
+
+    plt.plot(range(args.num_latents), lengthscale_values)
+    plt.xlabel(r"Laten Dimension")
+    plt.ylabel(r"$\ell$")
+    plt.savefig(os.path.join(fig_folder, "lengthscale_values.png"))
+    plt.clf()
+    plt.close()
+
+    plt.plot(range(args.num_latents), lengthscale_delta_values)
+    plt.xlabel(r"Laten Dimension")
+    plt.ylabel(r"$\ell_{\delta}$")
+    plt.savefig(os.path.join(fig_folder, "lengthscale_delta_values.png"))
+    plt.clf()
+    plt.close()
+
+    # Projected rho values
+    projected_rho = mf_gp.kernel.W.numpy() @ np.array(rho_values)
+    plt.plot(log10_mass_bins, projected_rho[:, 0])
+    plt.xlabel(r"$\log_{10}M_{\star}$")
+    plt.ylabel(r"$\rho$")
+    plt.savefig(os.path.join(fig_folder, "rho_values_projected.png"))
     plt.clf()
     plt.close()
 
