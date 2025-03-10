@@ -55,7 +55,7 @@ def main():
     mf_gp = LatentMFCoregionalizationSVGP(
         X_train, Y_train, kernel_L, kernel_delta, num_outputs=output_dim, num_latents=args.num_latents, Z=Z_init
     )
-    
+
     mf_gp.optimize((X_train, Y_train), max_iters=args.max_iters, initial_lr=0.1, unfix_noise_after=500)
     
     num_test_points = X_test_HF.shape[0]
@@ -63,11 +63,12 @@ def main():
     mean_pred, var_pred = mf_gp.predict_f(X_test_HF_aug)
     residuals = mean_pred.numpy() - Y_test_HF
     relative_error = np.abs(10**mean_pred / 10**Y_test_HF - 1)
-    
-    save_txt(10**mean_pred, os.path.join(model_folder, "predictions.txt"))
+
+    save_txt(mean_pred, os.path.join(model_folder, "predictions.txt"))    
     save_txt(var_pred.numpy(), os.path.join(model_folder, "variances.txt"))
     save_txt(10**mean_pred / 10**Y_test_HF, os.path.join(model_folder, "pred_over_exact.txt"))
 
+    # training results
     plt.imshow(mf_gp.kernel.W.numpy(), aspect="auto")
     plt.colorbar()
     plt.title("Learned W Matrix")
@@ -76,7 +77,18 @@ def main():
     plt.savefig(os.path.join(fig_folder, "W_matrix.png"))
     plt.clf()
     plt.close()
-
+    # loss history
+    plt.plot(mf_gp.loss_history)
+    plt.xlabel("Iteration")
+    plt.ylabel("Loss")
+    plt.title("Loss History")
+    plt.savefig(os.path.join(fig_folder, "loss_history.png"))
+    plt.clf()
+    plt.close()
+    # save model
+    # You can save the model for later use
+    # There are other ways, e.g., checkpoint manager, but this is the simplest
+    mf_gp.save_model(os.path.join(model_folder, "mf_gp_model.pkl"))
 
     ####### Hyperparameters #######
     num_outputs = len(mf_gp.kernel.kernels)
@@ -90,23 +102,38 @@ def main():
         lengthscale_values.append(mf_gp.kernel.kernels[i].kernel_L.lengthscales.numpy())
         lengthscale_delta_values.append(mf_gp.kernel.kernels[i].kernel_delta.lengthscales.numpy())
 
+
+    # Extract the learned parameters
+    param_names = [
+        "Omega_m",
+        "sigma_8",
+        "A_SN1",
+        "A_AGN1",
+        "A_SN2",
+        "A_AGN2",
+    ]
+
     plt.plot(range(args.num_latents), rho_values)
     plt.xlabel("Latent Dimension")
     plt.ylabel("$\\rho$")
     plt.savefig(os.path.join(fig_folder, "rho_values.png"))
     plt.clf()
     plt.close()
-
-    plt.plot(range(args.num_latents), lengthscale_values)
-    plt.xlabel(r"Laten Dimension")
+    # Lengthscale values
+    for i,param_name in enumerate(param_names):
+        plt.plot(range(args.num_latents), np.array(lengthscale_values)[:, i], label=param_name)
+    plt.xlabel(r"Latent Dimension")
+    plt.legend()
     plt.ylabel(r"$\ell$")
     plt.savefig(os.path.join(fig_folder, "lengthscale_values.png"))
     plt.clf()
     plt.close()
-
-    plt.plot(range(args.num_latents), lengthscale_delta_values)
-    plt.xlabel(r"Laten Dimension")
+    # Lengthscale delta values
+    for i,param_name in enumerate(param_names):
+        plt.plot(range(args.num_latents), np.array(lengthscale_delta_values)[:, i], label=param_name)
+    plt.xlabel(r"Latent Dimension")
     plt.ylabel(r"$\ell_{\delta}$")
+    plt.legend()
     plt.savefig(os.path.join(fig_folder, "lengthscale_delta_values.png"))
     plt.clf()
     plt.close()
@@ -117,6 +144,25 @@ def main():
     plt.xlabel(r"$\log_{10}M_{\star}$")
     plt.ylabel(r"$\rho$")
     plt.savefig(os.path.join(fig_folder, "rho_values_projected.png"))
+    plt.clf()
+    plt.close()
+
+    # Projected lengthscale values
+    for i,param_name in enumerate(param_names):
+        plt.plot(log10_mass_bins, mf_gp.kernel.W.numpy() @ np.array(lengthscale_values)[:, i], label=param_name)
+    plt.xlabel(r"$\log_{10}M_{\star}$")
+    plt.legend()
+    plt.ylabel(r"$\ell$")
+    plt.savefig(os.path.join(fig_folder, "lengthscale_values_projected.png"))
+    plt.clf()
+    plt.close()
+
+    for i,param_name in enumerate(param_names):
+        plt.plot(log10_mass_bins, mf_gp.kernel.W.numpy() @ np.array(lengthscale_delta_values)[:, i], label=param_name)
+    plt.xlabel(r"$\log_{10}M_{\star}$")
+    plt.ylabel(r"$\ell_{\delta}$")
+    plt.legend()
+    plt.savefig(os.path.join(fig_folder, "lengthscale_delta_values_projected.png"))
     plt.clf()
     plt.close()
 

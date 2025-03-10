@@ -4,11 +4,11 @@
 data_base="data/illustris/illustris-5-8-log1p"
 
 # Output base directory
-output_base="results"
+output_base="results_200_10"
 
 # Parameters
-num_latents=5
-num_inducing=100
+num_latents=10
+num_inducing=200
 max_iters=2000
 
 # Iterate over all folders and run the script
