@@ -98,7 +98,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
 
         # ✅ Define SVGP Model
         # one learnable parameter for the noise variance in the likelihood
-        variance = np.array(1.0, dtype=np.float64)
+        variance = np.array([1.0], dtype=np.float64)
         if heterosed:
             self.likelihood = HeteroscedasticGaussian(variance=variance)
         else:
