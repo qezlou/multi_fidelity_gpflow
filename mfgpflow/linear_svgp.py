@@ -143,11 +143,11 @@ class LatentMFCoregionalizationSVGP(SVGP):
             return loss
 
         # Run the optimization loop, reusing the same tf.function.
-        for i in range(max_iters):
+        for i in range(len(self.loss_history), max_iters):
             loss = optimization_step(X, Y)
             self.loss_history.append(loss.numpy())
             if i%100 == 0:
-                print(f"🔹 Iteration {i}: ELBO = {-self.elbo((X, Y)).numpy()}")
+                print(f"🔹 Iteration {i}: ELBO = {-self.elbo((X, Y)).numpy()}", flush=True)
 
             # Optionally, set the likelihood's noise variance to be trainable at a given iteration.
             if i == unfix_noise_after:   
