@@ -39,7 +39,7 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         - num_output_dims: The number of independent outputs (Y.shape[1]).
     """
 
-    def __init__(self, kernel_L, kernel_delta, num_output_dims):
+    def __init__(self, kernel_L, kernel_delta, num_output_dims, use_rho=True):
         super().__init__()
         self.kernel_L = kernel_L  # Kernel for low-fidelity function
         self.kernel_delta = kernel_delta  # Kernel for discrepancy
@@ -47,6 +47,10 @@ class LinearMultiFidelityKernel(gpflow.kernels.Kernel):
         self.rho = gpflow.Parameter(
             np.ones((num_output_dims, 1)), transform=positive()
         )  # Shape (P, 1), separate for each output dim
+        # I noticed the f_HF/f_LF is messy, so maybe better not to use rho
+        if not use_rho:
+            set_trainable(self.rho, False)
+
 
     def K(self, X, X2=None, ith_output_dim=0):
         """

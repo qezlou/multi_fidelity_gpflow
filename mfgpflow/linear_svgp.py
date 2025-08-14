@@ -54,7 +54,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
     - **Stable Optimization** using better parameter initialization.
     """
 
-    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, heterosed=False, window_fraction=0.4, scale=0.2):
+    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, use_rho=True, heterosed=False, window_fraction=0.4, scale=0.2):
         """
         Initializes the Multi-Fidelity SVGP model.
         Note: All the data (X, Y or even the paramterts in kernel_L and kernel_delta) are 
@@ -87,7 +87,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
 
         # ✅ Use LinearCoregionalization for Multi-Output GP
         # kernel_list = [mf_kernel for _ in range(num_latents)]
-        kernel_list = [LinearMultiFidelityKernel(deepcopy(kernel_L), deepcopy(kernel_delta), num_output_dims=1) for _ in range(num_latents)]
+        kernel_list = [LinearMultiFidelityKernel(deepcopy(kernel_L), deepcopy(kernel_delta), num_output_dims=1, use_rho=use_rho) for _ in range(num_latents)]
         self.kernel = LinearCoregionalization(kernel_list, W=W)
 
         # ✅ Use KMeans to Find Good Inducing Points
@@ -206,7 +206,7 @@ class HeteroscedasticGaussian(gpflow.likelihoods.Gaussian):
         var = tf.cast(self.variance, Fmu.dtype)
         
         # Compute the effective noise variance per data point and output.
-        effective_variance = var + Y_unc  # [N, P]
+        effective_variance = var + Y_unc**2  # [N, P]
         
         # Standard variational expectations of a Gaussian likelihood:
         ve = -0.5 * tf.math.log(2.0 * np.float64(np.pi)) \
