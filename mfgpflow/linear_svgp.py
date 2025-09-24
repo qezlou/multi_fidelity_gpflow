@@ -13,7 +13,7 @@ from gpflow.inducing_variables import InducingPoints, SharedIndependentInducingV
 from gpflow.kernels import LinearCoregionalization
 from .linear import LinearMultiFidelityKernel
 
-def initialize_W(output_dim, num_latents, window_fraction=0.3, scale=0.1):
+def initialize_W(output_dim, num_latents, window_fraction=0.3, scale=0.5):
     """
     Initialize W with a localized diagonal structure ensuring full output coverage.
 
@@ -112,8 +112,9 @@ class LatentMFCoregionalizationSVGP(SVGP):
                         )
 
         self.loss_history = []
+        self.kl_history = []
 
-    def optimize(self, data, max_iters=10000, initial_lr=0.005, unfix_noise_after=5000):
+    def optimize(self, data, max_iters=10000, initial_lr=0.005, unfix_noise_after=5000, kl_multiplier=1.0):
         """
         Optimizes the model using Adam with cosine decay.
 
@@ -124,9 +125,15 @@ class LatentMFCoregionalizationSVGP(SVGP):
             max_iters (int): Maximum number of optimization iterations.
             initial_lr (float): Initial learning rate.
             unfix_noise_after (int): Iteration at which to allow noise variance to be learned.
+            kl_multiplier (float): Lagrange multiplier applied to the KL term in the objective.
+                The objective being maximized becomes: E_q[log p(y|f)] - kl_multiplier * KL(q||p).
+                When kl_multiplier == 1.0 this is the standard ELBO.
         """
         X, Y = data
         optimizer = tf.optimizers.Adam(tf.keras.optimizers.schedules.CosineDecay(initial_lr, max_iters))
+
+        # Represent the multiplier as a Tensor with stable dtype (we expect float64 in this codebase).
+        kl_multiplier_tf = tf.constant(kl_multiplier, dtype=tf.float64)
 
 
         # Warm up the TFP cache by calling elbo once outside the tf.function. Otherwise the code fails 
@@ -136,18 +143,24 @@ class LatentMFCoregionalizationSVGP(SVGP):
         # Define a reusable tf.function that accepts X and Y as arguments.
         @tf.function
         def optimization_step(X, Y):
+            # Compute KL and ELBO within the tape so gradients include the KL scaling.
             with tf.GradientTape() as tape:
-                loss = -self.elbo((X, Y))
+                kl_term = self.prior_kl()
+                # ELBO = E_q[log p(y|f)] - KL, so the objective with multiplier is:
+                # L = E_q[log p(y|f)] - kl_multiplier * KL = ELBO - (kl_multiplier - 1) * KL
+                # Minimize negative objective => loss = -ELBO + (kl_multiplier - 1) * KL
+                loss = -self.elbo((X, Y)) + (kl_multiplier_tf - tf.constant(1.0, dtype=tf.float64)) * kl_term
             grads = tape.gradient(loss, self.trainable_variables)
             optimizer.apply_gradients(zip(grads, self.trainable_variables))
-            return loss
+            return loss, kl_term
 
         # Run the optimization loop, reusing the same tf.function.
         for i in range(len(self.loss_history), max_iters):
-            loss = optimization_step(X, Y)
+            loss, kl_term = optimization_step(X, Y)
             self.loss_history.append(loss.numpy())
+            self.kl_history.append(kl_term.numpy())
             if i%100 == 0:
-                print(f"🔹 Iteration {i}: ELBO = {-self.elbo((X, Y)).numpy()}", flush=True)
+                print(f"🔹 Iteration {i}: ELBO = {-self.elbo((X, Y)).numpy()}, KL = {kl_term.numpy()}", flush=True)
 
             # Optionally, set the likelihood's noise variance to be trainable at a given iteration.
             if i == unfix_noise_after:   
