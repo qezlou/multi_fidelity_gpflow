@@ -12,6 +12,7 @@ from gpflow.likelihoods import Gaussian
 from gpflow.inducing_variables import InducingPoints, SharedIndependentInducingVariables
 from gpflow.kernels import LinearCoregionalization
 from .linear import LinearMultiFidelityKernel
+from sklearn.decomposition import PCA
 
 def initialize_W(output_dim, num_latents, window_fraction=0.3, scale=0.5):
     """
@@ -45,6 +46,19 @@ def initialize_W(output_dim, num_latents, window_fraction=0.3, scale=0.5):
 
     return W_init * scale  # Scale for trainability
 
+def initialize_W_pca(Y, output_dim, num_latents, perturb=0.01):
+    """
+    Use PCA to initialize_W
+    """
+    pca = PCA(n_components=num_latents)
+    pca.fit(Y)
+    W_init = pca.components_.T  # Shape (output_dim, num_latents)
+    # normalize each column to have unit norm
+    W_init = W_init / np.linalg.norm(W_init, axis=0)
+    W_init += perturb * np.random.randn(*W_init.shape)  # Small random perturbation
+
+    return W_init
+
 class LatentMFCoregionalizationSVGP(SVGP):
     """
     Multi-Fidelity Sparse Variational GP with:
@@ -54,7 +68,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
     - **Stable Optimization** using better parameter initialization.
     """
 
-    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, use_rho=True, heterosed=False, window_fraction=0.4, scale=0.2):
+    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, use_rho=True, heterosed=False, w_type='diagonal', window_fraction=0.4, scale=0.2):
         """
         Initializes the Multi-Fidelity SVGP model.
         Note: All the data (X, Y or even the paramterts in kernel_L and kernel_delta) are 
@@ -82,8 +96,17 @@ class LatentMFCoregionalizationSVGP(SVGP):
         # mf_kernel = LinearMultiFidelityKernel(kernel_L, kernel_delta, num_latents)
 
         # ✅ Initialize W (P × L) with structured correlations
-        W_init = initialize_W(num_outputs, num_latents, window_fraction=window_fraction, scale=scale)
-        W = gpflow.Parameter(W_init)  # Learnable mixing matrix
+        if w_type == 'pca':
+            W_init = initialize_W_pca(Y[0:self.num_outputs], num_outputs, num_latents)
+            W = gpflow.Parameter(W_init)  # Learnable mixing matrix
+        elif w_type == 'diagonal':
+            W_init = initialize_W(num_outputs, num_latents, window_fraction=window_fraction, scale=scale)
+            W = gpflow.Parameter(W_init)  # Learnable mixing matrix
+        elif w_type == 'fixed_independent':
+            W_init = np.eye(num_outputs, num_latents)
+            W = gpflow.Parameter(W_init, trainable=False)  # Fixed independent mapping
+        else:
+            raise ValueError(f"Unknown w_type: {w_type}. Choose from 'pca', 'diagonal', or 'fixed_independent'.")
 
         # ✅ Use LinearCoregionalization for Multi-Output GP
         # kernel_list = [mf_kernel for _ in range(num_latents)]
@@ -210,6 +233,7 @@ class HeteroscedasticGaussian(gpflow.likelihoods.Gaussian):
         P = Fmu.shape[-1]
         Y_obs = Y[:, :P]
         Y_unc = Y[:, P:]
+        assert Y_unc.shape[-1] == P, "Y_unc must have the same number of outputs as Y_obs."
         
         # Cast to correct type.
         Y_obs = tf.cast(Y_obs, Fmu.dtype)
