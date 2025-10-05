@@ -31,6 +31,7 @@ def initialize_W(output_dim, num_latents, window_fraction=0.3, scale=0.5):
     Returns:
         W_init (np.ndarray): Initialized coregionalization matrix (output_dim, num_latents).
     """
+    print("🔹 Initializing W with structured diagonal correlations")
     W_init = np.zeros((output_dim, num_latents))
 
     # Define coverage for each latent GP
@@ -50,6 +51,7 @@ def initialize_W_pca(Y, output_dim, num_latents, perturb=0.01):
     """
     Use PCA to initialize_W
     """
+    print("🔹 Initializing W with PCA-based correlations")
     pca = PCA(n_components=num_latents)
     pca.fit(Y)
     W_init = pca.components_.T  # Shape (output_dim, num_latents)
@@ -97,7 +99,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
 
         # ✅ Initialize W (P × L) with structured correlations
         if w_type == 'pca':
-            W_init = initialize_W_pca(Y[0:self.num_outputs], num_outputs, num_latents)
+            W_init = initialize_W_pca(Y[:, 0:self.num_outputs], num_outputs, num_latents)
             W = gpflow.Parameter(W_init)  # Learnable mixing matrix
         elif w_type == 'diagonal':
             W_init = initialize_W(num_outputs, num_latents, window_fraction=window_fraction, scale=scale)
@@ -233,7 +235,7 @@ class HeteroscedasticGaussian(gpflow.likelihoods.Gaussian):
         P = Fmu.shape[-1]
         Y_obs = Y[:, :P]
         Y_unc = Y[:, P:]
-        assert Y_unc.shape[-1] == P, "Y_unc must have the same number of outputs as Y_obs."
+        assert Y_unc.shape[-1] == P, f"Y_unc must have the same number of outputs as Y_obs. Got {Y_unc.shape[-1]} vs {P}."
         
         # Cast to correct type.
         Y_obs = tf.cast(Y_obs, Fmu.dtype)
