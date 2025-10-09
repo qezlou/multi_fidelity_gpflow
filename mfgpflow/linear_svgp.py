@@ -233,7 +233,7 @@ class HeteroscedasticGaussian(gpflow.likelihoods.Gaussian):
         P = Fmu.shape[-1]
         Y_obs = Y[:, :P]
         Y_unc = Y[:, P:]
-        assert Y_unc.shape[-1] == P, "Y_unc must have the same number of outputs as Y_obs."
+        assert Y_unc.shape[-1] == P, f"Y_unc must have the same number of outputs as Y_obs., got {Y_unc.shape[-1]} and {P}."
         
         # Cast to correct type.
         Y_obs = tf.cast(Y_obs, Fmu.dtype)
