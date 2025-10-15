@@ -254,3 +254,62 @@ class HeteroscedasticGaussian(gpflow.likelihoods.Gaussian):
         
         # Sum over outputs to produce a [N]-shaped tensor.
         return tf.reduce_sum(ve, axis=-1)
+    
+
+class HeteroscedasticPoisson(gpflow.likelihoods.Poisson):
+    """
+    Poisson likelihood that incorporates a per-data-point uncertainty for each output.
+    The uncertainty is derived from the predicted rate in a poisson distribution, hence
+    no need to pass the uncertainty as an input.
+    
+    Expects Y as a tensor of shape [N, 2*P], where the first P columns are the observed counts
+    and the next P columns is a mask whether to use that output or not (1 to use, 0 to ignore).
+    The mask takes care of the missing output bins.
+
+    No additional variance to be learned, as opposed to the Gaussian case.
+    """
+    def __init__(self):
+        # No fixed variance parameter needed for Poisson.
+        super().__init__()
+
+    def _variational_expectations(self, Fmu, Fvar, Y):
+        """
+        NOTE: NOT FULLY IMPLEMENTED YET!
+
+        Variational expectations E_q(f)[log p(Y|f)] for Poisson likelihood.
+        Fmu, Fvar: mean and variance of q(f)
+        Parameters:
+        ----------
+        Fmu: tf.Tensor
+            Mean of the latent function q(f) at the data points, shape [N, P].
+        Fvar: tf.Tensor
+            Variance of the latent function q(f) at the data points, shape [N, P].
+        Y: tf.Tensor, shape [N, 2*P]
+            NOTE: NEED TO DECIDE counts vs HMF that is generalizable. The first
+            P columns are the observed counts, and the next P columns are is a mask
+            (1 to use, 0 to ignore). The mask takes care of the missing output bins.
+        Returns:
+        -------
+        tf.Tensor
+            Variational expectations, shape [N].
+        """
+        P = Fmu.shape[-1]
+        Y_obs = Y[:, :P]
+        Y_mask = Y[:, P:]
+        assert Y_mask.shape[-1] == P, f"Y_mask must have shape [N, {P}]"
+
+        Y_obs = tf.cast(Y_obs, Fmu.dtype)
+        Y_mask = tf.cast(Y_mask, Fmu.dtype)
+        # Expected rate (mean of exp(f))
+        expected_exp_f = tf.exp(Fmu + 0.5 * Fvar)
+
+        # Variational expectation of log-likelihood under q(f):
+        # E_q(f)[log p(y|f)] = y * E_q(f)[f] - E_q(f)[exp(f)] - log(y!)
+        ve = Y_obs * Fmu - expected_exp_f - tf.math.lgamma(Y_obs + 1.0)
+        ve = ve * Y_mask  # Apply mask to ignore missing outputs
+        num_valid = tf.reduce_sum(Y_mask, axis=-1)  # [N]
+        num_valid = tf.maximum(num_valid, 1.0)      # avoid division by 0
+        # When running in mini-batches, average over the valid outputs
+        # so all the valid data points contribute equally.
+        ve_per_point = tf.reduce_sum(ve, axis=-1) / num_valid
+        return ve_per_point
