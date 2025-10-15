@@ -70,7 +70,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
     - **Stable Optimization** using better parameter initialization.
     """
 
-    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, use_rho=True, heterosed=False, w_type='diagonal', window_fraction=0.4, scale=0.2):
+    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, use_rho=True, heterosed=False, loss_type='gaussian', w_type='diagonal', window_fraction=0.4, scale=0.2):
         """
         Initializes the Multi-Fidelity SVGP model.
         Note: All the data (X, Y or even the paramterts in kernel_L and kernel_delta) are 
@@ -88,6 +88,11 @@ class LatentMFCoregionalizationSVGP(SVGP):
             num_outputs (int): Number of output dimensions `(P)`, e.g., 49 bins.
             heterosed (bool): If True, uses heteroscedastic likelihood, i.e. the output for each samplehas a given
                 uncertainty. If False, uses a homoscedastic likelihood.
+            loss_type (str): Type of likelihood to use. Currently only 'gaussian' and 'poisson' are supported.
+            w_type (str): Type of W initialization. Options are:
+                - 'pca': Use PCA-based initialization.
+                - 'diagonal': Use structured diagonal initialization.
+                - 'fixed_independent': Fixed independent mapping (W = I).
             window_fraction (float): Fraction of total outputs each latent covers.
             scale (float): Scaling factor for initial weights.
         """
@@ -125,7 +130,12 @@ class LatentMFCoregionalizationSVGP(SVGP):
         # one learnable parameter for the noise variance in the likelihood
         variance = np.array([1.0], dtype=np.float64)
         if heterosed:
-            self.likelihood = HeteroscedasticGaussian(variance=variance)
+            if loss_type == 'gaussian':
+                print("🔹 Using Heteroscedastic Gaussian likelihood")
+                self.likelihood = HeteroscedasticGaussian(variance=variance)
+            elif loss_type == 'poisson':
+                print("🔹 Using Heteroscedastic Poisson likelihood")
+                self.likelihood = HeteroscedasticPoisson()
         else:
             self.likelihood = Gaussian(variance=variance)  
         super().__init__( kernel=self.kernel,
@@ -272,7 +282,7 @@ class HeteroscedasticPoisson(gpflow.likelihoods.Poisson):
         # No fixed variance parameter needed for Poisson.
         super().__init__()
 
-    def _variational_expectations(self, Fmu, Fvar, Y):
+    def _variational_expectations(self, X, Fmu, Fvar, Y):
         """
         NOTE: NOT FULLY IMPLEMENTED YET!
 
@@ -280,6 +290,8 @@ class HeteroscedasticPoisson(gpflow.likelihoods.Poisson):
         Fmu, Fvar: mean and variance of q(f)
         Parameters:
         ----------
+        X: tf.Tensor
+            Input data, shape [N, D]. We don't use it here but it's part of the signature.
         Fmu: tf.Tensor
             Mean of the latent function q(f) at the data points, shape [N, P].
         Fvar: tf.Tensor
