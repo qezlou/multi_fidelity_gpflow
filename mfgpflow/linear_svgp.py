@@ -98,6 +98,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
         """
         self.num_outputs = num_outputs
         self.num_latents = num_latents
+        self.loss_type = loss_type
 
         # ✅ Multi-Fidelity Kernel
         # mf_kernel = LinearMultiFidelityKernel(kernel_L, kernel_delta, num_latents)
@@ -198,7 +199,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
                 print(f"🔹 Iteration {i}: ELBO = {-self.elbo((X, Y)).numpy()}, KL = {kl_term.numpy()}", flush=True)
 
             # Optionally, set the likelihood's noise variance to be trainable at a given iteration.
-            if i == unfix_noise_after:   
+            if i == unfix_noise_after and self.loss_type=='gausssian':
                 self.likelihood.variance.trainable = True
 
 
