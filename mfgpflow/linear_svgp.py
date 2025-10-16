@@ -196,7 +196,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
             self.loss_history.append(loss.numpy())
             self.kl_history.append(kl_term.numpy())
             if i%100 == 0:
-                print(f"🔹 Iteration {i}: ELBO = {-self.elbo((X, Y)).numpy()}, KL = {kl_term.numpy()}", flush=True)
+                print(f"🔹 Iteration {i}: ELBO = {self.elbo((X, Y)).numpy()}, KL = {kl_term.numpy()}", flush=True)
 
             # Optionally, set the likelihood's noise variance to be trainable at a given iteration.
             if i == unfix_noise_after and self.loss_type=='gausssian':
@@ -314,11 +314,13 @@ class HeteroscedasticPoisson(gpflow.likelihoods.Poisson):
         Y_obs = tf.cast(Y_obs, Fmu.dtype)
         Y_mask = tf.cast(Y_mask, Fmu.dtype)
         # Expected rate (mean of exp(f))
-        expected_exp_f = tf.exp(Fmu + 0.5 * Fvar)
+        #expected_exp_f = tf.exp(Fmu + 0.5 * Fvar)
+        # Numerically stable expected rate
+        expected_exp_f = 10**(tf.clip_by_value(Fmu + 0.5 * Fvar, -15.0, 15.0))
 
         # Variational expectation of log-likelihood under q(f):
         # E_q(f)[log p(y|f)] = y * E_q(f)[f] - E_q(f)[exp(f)] - log(y!)
-        ve = Y_obs * Fmu - expected_exp_f - tf.math.lgamma(Y_obs + 1.0)
+        ve = 10**Y_obs * Fmu - expected_exp_f - tf.math.lgamma(10**Y_obs + 1.0)
         ve = ve * Y_mask  # Apply mask to ignore missing outputs
         num_valid = tf.reduce_sum(Y_mask, axis=-1)  # [N]
         num_valid = tf.maximum(num_valid, 1.0)      # avoid division by 0
