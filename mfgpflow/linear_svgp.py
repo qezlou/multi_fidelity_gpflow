@@ -307,20 +307,21 @@ class HeteroscedasticPoisson(gpflow.likelihoods.Poisson):
             Variational expectations, shape [N].
         """
         P = Fmu.shape[-1]
+        # Y_obs is expected counts not log10(HMF)
         Y_obs = Y[:, :P]
-        Y_mask = Y[:, P:]
-        assert Y_mask.shape[-1] == P, f"Y_mask must have shape [N, {P}]"
+        # We don't have uncertainties here, but a mask to ignore missing outputs.
+        Y_mask = Y_obs > 0 # [N, P] boolean mask
 
         Y_obs = tf.cast(Y_obs, Fmu.dtype)
         Y_mask = tf.cast(Y_mask, Fmu.dtype)
         # Expected rate (mean of exp(f))
         #expected_exp_f = tf.exp(Fmu + 0.5 * Fvar)
         # Numerically stable expected rate
-        expected_exp_f = 10**(tf.clip_by_value(Fmu + 0.5 * Fvar, -15.0, 15.0))
+        expected_exp_f = tf.clip_by_value(Fmu + 0.5 * Fvar, -15.0, 15.0)
 
         # Variational expectation of log-likelihood under q(f):
         # E_q(f)[log p(y|f)] = y * E_q(f)[f] - E_q(f)[exp(f)] - log(y!)
-        ve = 10**Y_obs * Fmu - expected_exp_f - tf.math.lgamma(10**Y_obs + 1.0)
+        ve = Y_obs * Fmu - expected_exp_f - tf.math.lgamma(Y_obs + 1.0)
         ve = ve * Y_mask  # Apply mask to ignore missing outputs
         num_valid = tf.reduce_sum(Y_mask, axis=-1)  # [N]
         num_valid = tf.maximum(num_valid, 1.0)      # avoid division by 0
