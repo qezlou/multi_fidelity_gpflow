@@ -295,12 +295,14 @@ class HeteroscedasticPoisson(gpflow.likelihoods.Poisson):
             Input data, shape [N, D]. We don't use it here but it's part of the signature.
         Fmu: tf.Tensor
             Mean of the latent function q(f) at the data points, shape [N, P].
+            This is expected to be in natural log-space.
         Fvar: tf.Tensor
             Variance of the latent function q(f) at the data points, shape [N, P].
+            This is expected to be in natural log-space.
         Y: tf.Tensor, shape [N, 2*P]
-            NOTE: NEED TO DECIDE counts vs HMF that is generalizable. The first
-            P columns are the observed counts, and the next P columns are is a mask
-            (1 to use, 0 to ignore). The mask takes care of the missing output bins.
+            The first P columns are the log_e(HMF), and the next P columns are a 
+            a multiplicative factors to get counts from HMF, i.e. V_box * Delta_log10M.
+            The missing bins have multiplicative factor = 0.
         Returns:
         -------
         tf.Tensor
@@ -313,24 +315,21 @@ class HeteroscedasticPoisson(gpflow.likelihoods.Poisson):
         # to get counts from HMF. They different from HF and LF sims due to
         # different volumes.
         Y_mult = Y[:, P:]
-
         # We don't have uncertainties here, but a mask to ignore missing outputs.
         Y_mask = Y_mult > 0 # [N, P] boolean mask
 
-        # Convert log10(HMF) to counts
-        Y_obs = tf.cast(10**Y_obs * Y_mult, Fmu.dtype) 
+        Y_counts = tf.cast(Y_obs * Y_mult, Fmu.dtype) 
         Y_mult = tf.cast(Y_mult, Fmu.dtype)
-        Y_mask = tf.cast(Y_mask, Fmu.dtype)
-        # Expected rate (mean of exp(f))
-        #expected_exp_f = 10**(Fmu + 0.5 * Fvar)
-        # Numerically stable expected rate
-        expected_exp_f = 10**tf.clip_by_value(Fmu + 0.5 * Fvar, -15.0, 15.0) * Y_mult
+        Y_mask = tf.cast(Y_mask, tf.bool)
+        # The data is in natural log-space, we should have:
+        #  E_q(f)[exp(f)] = exp(Fmu + 0.5 * Fvar)
+        expected_exp_f = Y_mult * tf.exp(tf.clip_by_value(Fmu + 0.5 * Fvar, -15.0, 15.0))
 
         ## Everything here is in counts here
+        # Apply mask to ignore missing outputs
         # Variational expectation of log-likelihood under q(f):
         # E_q(f)[log p(y|f)] = y * E_q(f)[f] - E_q(f)[exp(f)] - log(y!)
-        ve = Y_obs * Fmu - expected_exp_f - tf.math.lgamma(Y_obs + 1.0)
-        ve = ve * Y_mask  # Apply mask to ignore missing outputs
+        ve = Y_counts[Y_mask] * (np.log(Y_mult[Y_mask])) - expected_exp_f[Y_mask] - tf.math.lgamma(10**Y_counts[Y_mask] + 1.0)
         num_valid = tf.reduce_sum(Y_mask, axis=-1)  # [N]
         num_valid = tf.maximum(num_valid, 1.0)      # avoid division by 0
         # When running in mini-batches, average over the valid outputs
