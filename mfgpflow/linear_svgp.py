@@ -309,18 +309,16 @@ class HeteroscedasticPoisson(gpflow.likelihoods.Poisson):
             Variational expectations, shape [N].
         """
         P = Fmu.shape[-1]
-        # Y_obs is expected counts not log10(HMF)
-        Y_obs = Y[:, :P]
+        # Y_obs is expected counts not log_e(HMF)
+        Y_obs = tf.cast(Y[:, :P], Fmu.dtype)
         # The elements from P to 2P are the multiplicative factors
         # to get counts from HMF. They different from HF and LF sims due to
         # different volumes.
-        Y_mult = Y[:, P:]
-        # We don't have uncertainties here, but a mask to ignore missing outputs.
-        Y_mask = Y_mult > 0 # [N, P] boolean mask
-
-        Y_counts = tf.cast(Y_obs * Y_mult, Fmu.dtype) 
-        Y_mult = tf.cast(Y_mult, Fmu.dtype)
-        Y_mask = tf.cast(Y_mask, tf.bool)
+        Y_mult = tf.cast(Y[:, P:], Fmu.dtype)
+        # Mask for missing bins (Y_mult == 0)
+        Y_mask = tf.cast(Y_mult > 0, Fmu.dtype)
+        # Convert log(HMF) to counts
+        Y_counts = tf.exp(Y_obs) * Y_mult  # [N, P]
         # The data is in natural log-space, we should have:
         #  E_q(f)[exp(f)] = exp(Fmu + 0.5 * Fvar)
         expected_exp_f = Y_mult * tf.exp(tf.clip_by_value(Fmu + 0.5 * Fvar, -15.0, 15.0))
@@ -329,10 +327,11 @@ class HeteroscedasticPoisson(gpflow.likelihoods.Poisson):
         # Apply mask to ignore missing outputs
         # Variational expectation of log-likelihood under q(f):
         # E_q(f)[log p(y|f)] = y * E_q(f)[f] - E_q(f)[exp(f)] - log(y!)
-        ve = Y_counts[Y_mask] * (np.log(Y_mult[Y_mask])) - expected_exp_f[Y_mask] - tf.math.lgamma(10**Y_counts[Y_mask] + 1.0)
-        num_valid = tf.reduce_sum(Y_mask, axis=-1)  # [N]
-        num_valid = tf.maximum(num_valid, 1.0)      # avoid division by 0
+        ve = Y_counts * (tf.math.log(Y_mult + 1e-9) + Fmu) - expected_exp_f - tf.math.lgamma(Y_counts + 1.0)
+        ve = ve * Y_mask  # Apply mask to ignore missing outputs
         # When running in mini-batches, average over the valid outputs
         # so all the valid data points contribute equally.
+        num_valid = tf.reduce_sum(Y_mask, axis=-1)  # [N]
+        num_valid = tf.maximum(num_valid, 1.0)      # avoid division by 0
         ve_per_point = tf.reduce_sum(ve, axis=-1) / num_valid
         return ve_per_point
