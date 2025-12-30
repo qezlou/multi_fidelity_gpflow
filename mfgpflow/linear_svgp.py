@@ -70,7 +70,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
     - **Stable Optimization** using better parameter initialization.
     """
 
-    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, use_rho=True, heterosed=False, loss_type='gaussian', w_type='diagonal', window_fraction=0.4, scale=0.2):
+    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, use_rho=True, heterosed=False, loss_type='gaussian', w_type='diagonal', window_fraction=0.4, scale=0.2, noise_num_latents=None, noise_w_type=None, noise_window_fraction=0.4, noise_scale=0.2):
         """
         Initializes the Multi-Fidelity SVGP model.
         Note: All the data (X, Y or even the paramterts in kernel_L and kernel_delta) are 
@@ -79,8 +79,10 @@ class LatentMFCoregionalizationSVGP(SVGP):
             X (np.ndarray): Input data `(N, D)`, where `D` is the input dimension.
             Y (np.ndarray): Output data
                 if heterosed==False: shape is `(N, P)`, where `P` is the number of output bins.
-                if heterosed==True: shape is `(N, 2*P)`, where the first `P` columns are the observed outputs
-                and the next `P` columns are the uncertainties. Loo at at the `HeteroscedasticGaussian` class for more details.
+                if heterosed==True and loss_type=='gaussian': shape is `(N, P)`; the aleatoric noise is learned
+                by an independent multi-fidelity GP (no uncertainties need to be passed).
+                if heterosed==True and loss_type=='poisson': shape is `(N, 2*P)`, where the first `P` columns are the observed outputs
+                and the next `P` columns are the mask for missing bins (same as previous behaviour).
             kernel_L (gpflow.kernels.Kernel): Kernel for low-fidelity (LF) data.
             kernel_delta (gpflow.kernels.Kernel): Kernel for high-fidelity (HF) discrepancy.
             num_latents (int): Number of latent GPs `(L)`, typically `L < P`.
@@ -95,30 +97,52 @@ class LatentMFCoregionalizationSVGP(SVGP):
                 - 'fixed_independent': Fixed independent mapping (W = I).
             window_fraction (float): Fraction of total outputs each latent covers.
             scale (float): Scaling factor for initial weights.
+            noise_num_latents (int): Number of latent GPs used for the aleatoric noise process (defaults to num_latents).
+            noise_w_type (str): W initialization strategy for the aleatoric process (defaults to w_type).
+            noise_window_fraction (float): Window fraction for the aleatoric mapping (defaults to window_fraction).
+            noise_scale (float): Initial scale for the aleatoric mapping (defaults to scale).
         """
         self.num_outputs = num_outputs
         self.num_latents = num_latents
+        self.noise_num_latents = noise_num_latents if noise_num_latents is not None else num_latents
         self.loss_type = loss_type
 
         # ✅ Multi-Fidelity Kernel
         # mf_kernel = LinearMultiFidelityKernel(kernel_L, kernel_delta, num_latents)
 
         # ✅ Initialize W (P × L) with structured correlations
-        if w_type == 'pca':
-            W_init = initialize_W_pca(Y[:, 0:self.num_outputs], num_outputs, num_latents)
-            W = gpflow.Parameter(W_init)  # Learnable mixing matrix
-        elif w_type == 'diagonal':
-            W_init = initialize_W(num_outputs, num_latents, window_fraction=window_fraction, scale=scale)
-            W = gpflow.Parameter(W_init)  # Learnable mixing matrix
-        elif w_type == 'fixed_independent':
-            W_init = np.eye(num_outputs, num_latents)
-            W = gpflow.Parameter(W_init, trainable=False)  # Fixed independent mapping
+        def _init_W(output_dim, num_lat, chosen_w_type, chosen_window_fraction, chosen_scale):
+            if chosen_w_type == 'pca':
+                return initialize_W_pca(Y[:, 0:self.num_outputs], output_dim, num_lat)
+            if chosen_w_type == 'diagonal':
+                return initialize_W(output_dim, num_lat, window_fraction=chosen_window_fraction, scale=chosen_scale)
+            if chosen_w_type == 'fixed_independent':
+                return np.eye(output_dim, num_lat)
+            raise ValueError(f"Unknown w_type: {chosen_w_type}. Choose from 'pca', 'diagonal', or 'fixed_independent'.")
+
+        kernel_list = []
+        if heterosed and loss_type == 'gaussian':
+            # Mean process
+            W_mean = _init_W(num_outputs, num_latents, w_type, window_fraction, scale)
+            # Independent aleatoric process
+            noise_w_type = noise_w_type or w_type
+            noise_window_fraction = noise_window_fraction or window_fraction
+            noise_scale = noise_scale or scale
+            W_noise = _init_W(num_outputs, self.noise_num_latents, noise_w_type, noise_window_fraction, noise_scale)
+
+            W_init = np.zeros((2 * num_outputs, num_latents + self.noise_num_latents))
+            W_init[:num_outputs, :num_latents] = W_mean
+            W_init[num_outputs:, num_latents:] = W_noise
+            W = gpflow.Parameter(W_init)  # Learnable mixing matrix for mean+noise
+
+            kernel_list.extend([LinearMultiFidelityKernel(deepcopy(kernel_L), deepcopy(kernel_delta), num_output_dims=1, use_rho=use_rho) for _ in range(num_latents)])
+            kernel_list.extend([LinearMultiFidelityKernel(deepcopy(kernel_L), deepcopy(kernel_delta), num_output_dims=1, use_rho=use_rho) for _ in range(self.noise_num_latents)])
         else:
-            raise ValueError(f"Unknown w_type: {w_type}. Choose from 'pca', 'diagonal', or 'fixed_independent'.")
+            W_init = _init_W(num_outputs, num_latents, w_type, window_fraction, scale)
+            W = gpflow.Parameter(W_init)  # Learnable mixing matrix
+            kernel_list.extend([LinearMultiFidelityKernel(deepcopy(kernel_L), deepcopy(kernel_delta), num_output_dims=1, use_rho=use_rho) for _ in range(num_latents)])
 
         # ✅ Use LinearCoregionalization for Multi-Output GP
-        # kernel_list = [mf_kernel for _ in range(num_latents)]
-        kernel_list = [LinearMultiFidelityKernel(deepcopy(kernel_L), deepcopy(kernel_delta), num_output_dims=1, use_rho=use_rho) for _ in range(num_latents)]
         self.kernel = LinearCoregionalization(kernel_list, W=W)
 
         # ✅ Use KMeans to Find Good Inducing Points
@@ -142,7 +166,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
         super().__init__( kernel=self.kernel,
                          likelihood=self.likelihood,
                          inducing_variable=inducing_variable,
-                         num_latent_gps=num_latents,
+                         num_latent_gps=len(kernel_list),
                          num_data=X.shape[0],
                          mean_function=None
                         )
@@ -222,18 +246,19 @@ class LatentMFCoregionalizationSVGP(SVGP):
     
 class HeteroscedasticGaussian(gpflow.likelihoods.Gaussian):
     """
-    Gaussian likelihood that incorporates a per-data-point uncertainty for each output.
-    
-    Instead of passing a tuple, this implementation expects the targets to be a combined tensor:
-    
-         Y_combined = [Y_obs, Y_unc]
+    Gaussian likelihood that learns aleatoric uncertainty with an auxiliary GP.
+
+    The latent function is split into two parts:
+      - First P columns: predictive mean for each output.
+      - Next P columns: log-variance produced by an independent GP.
+
+    The observed targets Y are shape [N, P]; no uncertainties need to be passed.
+    The effective variance per point/output is:
+
+         effective_variance = self.variance + exp(log_var_mu + 0.5 * log_var_var)
          
-    concatenated along the last dimension, so that if Y_obs and Y_unc are each shape [N, P],
-    then Y_combined has shape [N, 2*P]. In this likelihood, the effective noise variance is:
-    
-         effective_variance = self.variance + Y_unc
-         
-    where self.variance is a (possibly vector-valued) baseline noise parameter.
+    where self.variance is a (possibly vector-valued) baseline noise parameter, and
+    log_var_mu / log_var_var are the mean/variance of the log-variance GP.
     """
     def __init__(self, variance):
         # Ensure the variance is wrapped as a trainable parameter with a positivity transform.
@@ -241,27 +266,32 @@ class HeteroscedasticGaussian(gpflow.likelihoods.Gaussian):
         super().__init__(variance=variance)
 
     def _variational_expectations(self, X, Fmu, Fvar, Y):
-        # Fmu and Fvar have shape [N, P] where P is the number of outputs.
-        # Y is assumed to have shape [N, 2*P], with the first P columns for Y_obs and the next P for Y_unc.
-        P = Fmu.shape[-1]
-        Y_obs = Y[:, :P]
-        Y_unc = Y[:, P:]
-        assert Y_unc.shape[-1] == P, f"Y_unc must have the same number of outputs as Y_obs. Got {Y_unc.shape[-1]} vs {P}."
+        # Fmu and Fvar have shape [N, 2*P] where P is the number of outputs.
+        P = Y.shape[-1]
+        assert Fmu.shape[-1] == 2 * P, f"Expected Fmu to have 2*P outputs (mean + log_var). Got {Fmu.shape[-1]} vs {2*P}."
+        Y_obs = Y
         
         # Cast to correct type.
         Y_obs = tf.cast(Y_obs, Fmu.dtype)
-        Y_unc = tf.cast(Y_unc, Fmu.dtype)
 
         # Make sure to cast but do NOT override self.variance.
         var = tf.cast(self.variance, Fmu.dtype)
+
+        # Split mean/log-variance components.
+        mean_mu = Fmu[:, :P]
+        logvar_mu = Fmu[:, P:]
+        mean_var = Fvar[:, :P]
+        logvar_var = Fvar[:, P:]
         
         # Compute the effective noise variance per data point and output.
-        effective_variance = var + Y_unc**2  # [N, P]
+        # E[exp(g)] for g ~ N(mu, var) is exp(mu + 0.5 * var) ensuring positivity.
+        predicted_noise = tf.exp(logvar_mu + 0.5 * logvar_var)
+        effective_variance = var + predicted_noise  # [N, P]
         
         # Standard variational expectations of a Gaussian likelihood:
         ve = -0.5 * tf.math.log(2.0 * np.float64(np.pi)) \
              - 0.5 * tf.math.log(effective_variance) \
-             - 0.5 * ((Y_obs - Fmu) ** 2 + Fvar) / effective_variance
+             - 0.5 * ((Y_obs - mean_mu) ** 2 + mean_var) / effective_variance
         
         # Sum over outputs to produce a [N]-shaped tensor.
         return tf.reduce_sum(ve, axis=-1)
