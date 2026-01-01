@@ -237,7 +237,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
             self.loss_history.append(loss.numpy())
             self.kl_history.append(kl_term.numpy())
             if i%100 == 0:
-                print(f"🔹 Iteration {i}: ELBO = {self.elbo((X, Y)).numpy()}, KL = {kl_term.numpy()}")
+                print(f"🔹 Iteration {i}: ELBO = {self.elbo((X, Y)).numpy()}, KL = {kl_term.numpy()}", flush=True)
 
             # Optionally, set the likelihood's noise variance to be trainable at a given iteration.
             if i == unfix_noise_after and self.loss_type=='gausssian':
