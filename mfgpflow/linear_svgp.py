@@ -1,3 +1,4 @@
+import logging
 import gpflow
 import tensorflow as tf
 import numpy as np
@@ -14,52 +15,8 @@ from gpflow.kernels import LinearCoregionalization
 from .linear import LinearMultiFidelityKernel
 from sklearn.decomposition import PCA
 
-def initialize_W(output_dim, num_latents, window_fraction=0.3, scale=0.5):
-    """
-    Initialize W with a localized diagonal structure ensuring full output coverage.
 
-    - Each latent GP influences multiple nearby outputs.
-    - Overlapping mappings provide smooth transitions.
-    - Weaker prior influence allows the model to adjust.
 
-    Parameters:
-        output_dim (int): Number of output bins.
-        num_latents (int): Number of latent GPs.
-        window_fraction (float): Fraction of outputs each latent covers (~0.3 is a good default).
-        scale (float): Scaling factor for trainability.
-
-    Returns:
-        W_init (np.ndarray): Initialized coregionalization matrix (output_dim, num_latents).
-    """
-    print("🔹 Initializing W with structured diagonal correlations")
-    W_init = np.zeros((output_dim, num_latents))
-
-    # Define coverage for each latent GP
-    window_size = max(int(output_dim * window_fraction), 2)  # Ensure at least 2 output bins
-    stride = max(output_dim // (num_latents - 1), 1)  # Spread latents evenly, ensuring full coverage
-
-    for j in range(num_latents):
-        center = min(int(j * stride), output_dim - 1)  # Ensure last latent maps fully
-        for i in range(output_dim):
-            distance = abs(i - center)
-            if distance < window_size / 2:
-                W_init[i, j] = np.exp(-0.1 * distance)  # Weaker exponential decay for flexibility
-
-    return W_init * scale  # Scale for trainability
-
-def initialize_W_pca(Y, output_dim, num_latents, perturb=0.01):
-    """
-    Use PCA to initialize_W
-    """
-    print("🔹 Initializing W with PCA-based correlations")
-    pca = PCA(n_components=num_latents)
-    pca.fit(Y)
-    W_init = pca.components_.T  # Shape (output_dim, num_latents)
-    # normalize each column to have unit norm
-    W_init = W_init / np.linalg.norm(W_init, axis=0)
-    W_init += perturb * np.random.randn(*W_init.shape)  # Small random perturbation
-
-    return W_init
 
 class LatentMFCoregionalizationSVGP(SVGP):
     """
@@ -70,7 +27,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
     - **Stable Optimization** using better parameter initialization.
     """
 
-    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, use_rho=True, heterosed=False, loss_type='gaussian', w_type='diagonal', window_fraction=0.4, scale=0.2, noise_num_latents=None, noise_w_type=None, noise_window_fraction=0.4, noise_scale=0.2):
+    def __init__(self, X, Y, kernel_L, kernel_delta, num_latents, num_inducing, num_outputs, use_rho=True, heterosed=False, loss_type='gaussian', w_type='diagonal', window_fraction=0.4, scale=0.2, noise_num_latents=None, noise_w_type=None, noise_window_fraction=0.4, noise_scale=0.2, logging_level=logging.INFO):
         """
         Initializes the Multi-Fidelity SVGP model.
         Note: All the data (X, Y or even the paramterts in kernel_L and kernel_delta) are 
@@ -102,6 +59,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
             noise_window_fraction (float): Window fraction for the aleatoric mapping (defaults to window_fraction).
             noise_scale (float): Initial scale for the aleatoric mapping (defaults to scale).
         """
+        self.logger = self.configure_logging(logging_level)
         self.num_outputs = num_outputs
         self.num_latents = num_latents
         self.noise_num_latents = noise_num_latents if noise_num_latents is not None else num_latents
@@ -113,9 +71,9 @@ class LatentMFCoregionalizationSVGP(SVGP):
         # ✅ Initialize W (P × L) with structured correlations
         def _init_W(output_dim, num_lat, chosen_w_type, chosen_window_fraction, chosen_scale):
             if chosen_w_type == 'pca':
-                return initialize_W_pca(Y[:, 0:self.num_outputs], output_dim, num_lat)
+                return self.initialize_W_pca(Y[:, 0:self.num_outputs], output_dim, num_lat)
             if chosen_w_type == 'diagonal':
-                return initialize_W(output_dim, num_lat, window_fraction=chosen_window_fraction, scale=chosen_scale)
+                return self.initialize_W(output_dim, num_lat, window_fraction=chosen_window_fraction, scale=chosen_scale)
             if chosen_w_type == 'fixed_independent':
                 return np.eye(output_dim, num_lat)
             raise ValueError(f"Unknown w_type: {chosen_w_type}. Choose from 'pca', 'diagonal', or 'fixed_independent'.")
@@ -156,10 +114,10 @@ class LatentMFCoregionalizationSVGP(SVGP):
         variance = np.array([1.0], dtype=np.float64)
         if heterosed:
             if loss_type == 'gaussian':
-                print("🔹 Using Heteroscedastic Gaussian likelihood")
+                self.logger.debug("🔹 Using Heteroscedastic Gaussian likelihood")
                 self.likelihood = HeteroscedasticGaussian(variance=variance)
             elif loss_type == 'poisson':
-                print("🔹 Using Heteroscedastic Poisson likelihood")
+                self.logger.debug("🔹 Using Heteroscedastic Poisson likelihood")
                 self.likelihood = HeteroscedasticPoisson()
         else:
             self.likelihood = Gaussian(variance=variance)  
@@ -173,6 +131,65 @@ class LatentMFCoregionalizationSVGP(SVGP):
 
         self.loss_history = []
         self.kl_history = []
+
+
+    def initialize_W(self, output_dim, num_latents, window_fraction=0.3, scale=0.5):
+        """
+        Initialize W with a localized diagonal structure ensuring full output coverage.
+
+        - Each latent GP influences multiple nearby outputs.
+        - Overlapping mappings provide smooth transitions.
+        - Weaker prior influence allows the model to adjust.
+
+        Parameters:
+            output_dim (int): Number of output bins.
+            num_latents (int): Number of latent GPs.
+            window_fraction (float): Fraction of outputs each latent covers (~0.3 is a good default).
+            scale (float): Scaling factor for trainability.
+
+        Returns:
+            W_init (np.ndarray): Initialized coregionalization matrix (output_dim, num_latents).
+        """
+        self.logger.debug("🔹 Initializing W with structured diagonal correlations")
+        W_init = np.zeros((output_dim, num_latents))
+
+        # Define coverage for each latent GP
+        window_size = max(int(output_dim * window_fraction), 2)  # Ensure at least 2 output bins
+        stride = max(output_dim // (num_latents - 1), 1)  # Spread latents evenly, ensuring full coverage
+
+        for j in range(num_latents):
+            center = min(int(j * stride), output_dim - 1)  # Ensure last latent maps fully
+            for i in range(output_dim):
+                distance = abs(i - center)
+                if distance < window_size / 2:
+                    W_init[i, j] = np.exp(-0.1 * distance)  # Weaker exponential decay for flexibility
+
+        return W_init * scale  # Scale for trainability
+
+    def configure_logging(self, logging_level):
+        """Sets up logging based on the provided logging level."""
+        logger = logging.getLogger('ProjCorrEmus')
+        logger.setLevel(logging_level)
+        console_handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+        
+        return logger
+
+    def initialize_W_pca(self, Y, output_dim, num_latents, perturb=0.01):
+        """
+        Use PCA to initialize_W
+        """
+        self.logger.debug("🔹 Initializing W with PCA-based correlations")
+        pca = PCA(n_components=num_latents)
+        pca.fit(Y)
+        W_init = pca.components_.T  # Shape (output_dim, num_latents)
+        # normalize each column to have unit norm
+        W_init = W_init / np.linalg.norm(W_init, axis=0)
+        W_init += perturb * np.random.randn(*W_init.shape)  # Small random perturbation
+
+        return W_init
 
     def optimize(self, data, max_iters=10000, initial_lr=0.005, unfix_noise_after=5000, kl_multiplier=1.0):
         """
@@ -220,7 +237,7 @@ class LatentMFCoregionalizationSVGP(SVGP):
             self.loss_history.append(loss.numpy())
             self.kl_history.append(kl_term.numpy())
             if i%100 == 0:
-                print(f"🔹 Iteration {i}: ELBO = {self.elbo((X, Y)).numpy()}, KL = {kl_term.numpy()}", flush=True)
+                print(f"🔹 Iteration {i}: ELBO = {self.elbo((X, Y)).numpy()}, KL = {kl_term.numpy()}")
 
             # Optionally, set the likelihood's noise variance to be trainable at a given iteration.
             if i == unfix_noise_after and self.loss_type=='gausssian':
