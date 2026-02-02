@@ -207,6 +207,17 @@ class LatentMFCoregionalizationSVGP(SVGP):
                 When kl_multiplier == 1.0 this is the standard ELBO.
         """
         X, Y = data
+        
+        # Convert numpy arrays to TensorFlow tensors if needed
+        if isinstance(X, np.ndarray):
+            X = tf.constant(X, dtype=tf.float64)
+        if isinstance(Y, np.ndarray):
+            Y = tf.constant(Y, dtype=tf.float64)
+        
+        # Ensure tensors are on the correct device
+        X = tf.identity(X)  # This ensures the tensor is on the current device
+        Y = tf.identity(Y)  # This ensures the tensor is on the current device
+        
         optimizer = tf.optimizers.Adam(tf.keras.optimizers.schedules.CosineDecay(initial_lr, max_iters))
 
         # Represent the multiplier as a Tensor with stable dtype (we expect float64 in this codebase).
@@ -233,11 +244,14 @@ class LatentMFCoregionalizationSVGP(SVGP):
 
         # Run the optimization loop, reusing the same tf.function.
         for i in range(len(self.loss_history), max_iters):
+            # Ensure tensors remain on the correct device during optimization
             loss, kl_term = optimization_step(X, Y)
-            self.loss_history.append(loss.numpy())
-            self.kl_history.append(kl_term.numpy())
+            self.loss_history.append(float(loss.numpy()))  # Convert to Python float to avoid device issues
+            self.kl_history.append(float(kl_term.numpy()))  # Convert to Python float to avoid device issues
             if i%100 == 0:
-                print(f"🔹 Iteration {i}: ELBO = {self.elbo((X, Y)).numpy()}, KL = {kl_term.numpy()}", flush=True)
+                elbo_val = float(self.elbo((X, Y)).numpy())  # Convert to Python float
+                kl_val = float(kl_term.numpy())  # Convert to Python float
+                print(f"🔹 Iteration {i}: ELBO = {elbo_val}, KL = {kl_val}", flush=True)
 
             # Optionally, set the likelihood's noise variance to be trainable at a given iteration.
             if i == unfix_noise_after and self.loss_type=='gausssian':
